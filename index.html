@@ -89,6 +89,31 @@
   .overlay.show { display: flex; }
   .overlay h2 { margin: 0; font-size: 24px; }
   .overlay p { margin: 0; color: var(--muted); font-size: 14px; }
+  .name-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .name-field input {
+    width: 200px;
+    max-width: 60vw;
+    text-align: center;
+    padding: 8px 12px;
+    font-size: 15px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0d1117;
+    color: var(--text);
+  }
+  .name-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .name-field small {
+    color: var(--muted);
+    font-size: 11px;
+  }
   button {
     cursor: pointer;
     border: none;
@@ -157,6 +182,10 @@
     <div class="overlay" id="overlay">
       <h2 id="overlayTitle">貪食蛇</h2>
       <p id="overlayText">按空白鍵或方向鍵開始遊戲</p>
+      <div class="name-field" id="nameField">
+        <input type="text" id="nameInput" maxlength="20" placeholder="輸入你的名字 Name" autocomplete="off" />
+        <small>分數會記錄到排行榜</small>
+      </div>
       <button id="startBtn">開始遊戲 Start</button>
     </div>
   </div>
@@ -182,12 +211,19 @@
   const overlayText = document.getElementById('overlayText');
   const startBtn = document.getElementById('startBtn');
   const dpad = document.getElementById('dpad');
+  const nameField = document.getElementById('nameField');
+  const nameInput = document.getElementById('nameInput');
+
+  // Paste your deployed Google Apps Script Web App URL here (see README).
+  // Leave as-is to play without leaderboard recording.
+  const SHEET_WEBAPP_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
 
   const GRID = 20;
   const CELLS = canvas.width / GRID;
   const BEST_KEY = 'snake_best_score';
+  const NAME_KEY = 'snake_player_name';
 
-  let snake, dir, nextDir, food, score, best, speedMs, timer, running, paused;
+  let snake, dir, nextDir, food, score, best, speedMs, timer, running, paused, playerName;
 
   function loadBest() {
     return Number(localStorage.getItem(BEST_KEY) || 0);
@@ -195,6 +231,26 @@
 
   function saveBest(v) {
     try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) {}
+  }
+
+  function loadName() {
+    try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+  }
+
+  function saveName(v) {
+    try { localStorage.setItem(NAME_KEY, v); } catch (e) {}
+  }
+
+  function submitScore(name, finalScore) {
+    if (!SHEET_WEBAPP_URL || SHEET_WEBAPP_URL.indexOf('PASTE_YOUR') === 0) return;
+    fetch(SHEET_WEBAPP_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ name, score: finalScore })
+    }).catch(() => {
+      // best-effort only; a failed submit should never block the game
+    });
   }
 
   function randCell() {
@@ -364,11 +420,16 @@
     timer = setInterval(step, speedMs);
   }
 
-  function showOverlay(title, text, btnLabel) {
+  function showOverlay(title, text, btnLabel, showName) {
     overlayTitle.textContent = title;
     overlayText.textContent = text;
     startBtn.textContent = btnLabel;
+    nameField.style.display = showName ? 'flex' : 'none';
     overlay.classList.add('show');
+    if (showName) {
+      nameInput.focus();
+      nameInput.select();
+    }
   }
 
   function hideOverlay() {
@@ -384,10 +445,29 @@
     restartTimer();
   }
 
+  // validates the name field (only relevant while not running), then starts;
+  // while a game is in progress this just toggles pause instead
+  function tryStart() {
+    if (running) {
+      togglePause();
+      return;
+    }
+    const name = nameInput.value.trim();
+    if (!name) {
+      overlayText.textContent = '請先輸入名字才能開始遊戲 Please enter a name';
+      nameInput.focus();
+      return;
+    }
+    playerName = name;
+    saveName(playerName);
+    startGame();
+  }
+
   function gameOver() {
     clearInterval(timer);
     running = false;
-    showOverlay('遊戲結束 Game Over', `分數：${score}　按開始重新挑戰`, '再玩一次 Restart');
+    submitScore(playerName, score);
+    showOverlay('遊戲結束 Game Over', `${playerName}，分數：${score}　按開始重新挑戰`, '再玩一次 Restart', true);
   }
 
   function togglePause() {
@@ -395,7 +475,7 @@
     paused = !paused;
     if (paused) {
       clearInterval(timer);
-      showOverlay('已暫停 Paused', '按空白鍵或按鈕繼續', '繼續 Resume');
+      showOverlay('已暫停 Paused', '按空白鍵或按鈕繼續', '繼續 Resume', false);
     } else {
       hideOverlay();
       restartTimer();
@@ -409,6 +489,11 @@
   }
 
   document.addEventListener('keydown', (e) => {
+    if (document.activeElement === nameInput) {
+      // let the player type their name normally; Enter starts the game
+      if (e.key === 'Enter') { e.preventDefault(); tryStart(); }
+      return;
+    }
     switch (e.key) {
       case 'ArrowUp': case 'w': case 'W':
         e.preventDefault(); setDirection(0, -1); break;
@@ -420,7 +505,7 @@
         e.preventDefault(); setDirection(1, 0); break;
       case ' ':
         e.preventDefault();
-        if (!running) startGame(); else togglePause();
+        tryStart();
         break;
     }
   });
@@ -433,9 +518,7 @@
     setDirection(x, y);
   });
 
-  startBtn.addEventListener('click', () => {
-    if (!running) startGame(); else togglePause();
-  });
+  startBtn.addEventListener('click', tryStart);
 
   // touch / swipe controls for mobile (no arrow keys on a touchscreen)
   let touchStartX = 0;
@@ -466,7 +549,7 @@
 
     if (Math.max(absX, absY) < SWIPE_THRESHOLD) {
       // a tap rather than a swipe: start / pause, same as space bar
-      if (!running) startGame(); else togglePause();
+      tryStart();
       return;
     }
 
@@ -480,9 +563,10 @@
   // init
   best = loadBest();
   bestEl.textContent = best;
+  nameInput.value = loadName();
   resetState();
   draw();
-  showOverlay('貪食蛇 Snake', '按空白鍵或按下開始遊戲', '開始遊戲 Start');
+  showOverlay('貪食蛇 Snake', '輸入名字後按空白鍵或按下開始遊戲', '開始遊戲 Start', true);
 })();
 </script>
 </body>
