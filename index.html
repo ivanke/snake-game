@@ -283,16 +283,18 @@
     try { localStorage.setItem(NAME_KEY, v); } catch (e) {}
   }
 
-  // posts the score and reads back { rank, total, top } from Apps Script;
-  // best-effort only, a failed/blocked request must never break the game
+  // submits the score via GET (?name=&score=) and reads back
+  // { rank, total, top } from Apps Script; best-effort only, a
+  // failed/blocked request must never break the game.
+  // GET is used on purpose: Apps Script serves its response via a 302
+  // redirect, and a POST gets downgraded to GET when following that
+  // redirect (per the fetch spec) - which the redirect target then
+  // rejects. A GET request avoids that downgrade entirely.
   async function submitScore(name, finalScore) {
     if (!SHEET_WEBAPP_URL || SHEET_WEBAPP_URL.indexOf('PASTE_YOUR') === 0) return null;
     try {
-      const res = await fetch(SHEET_WEBAPP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ name, score: finalScore })
-      });
+      const url = `${SHEET_WEBAPP_URL}?name=${encodeURIComponent(name)}&score=${encodeURIComponent(finalScore)}`;
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) return null;
       return await res.json();
     } catch (e) {

@@ -1,8 +1,14 @@
 /**
- * Google Apps Script Web App that receives {name, score} POSTs from the
- * Snake game, appends them as a row in the bound Google Spreadsheet, and
- * replies with the submitted score's rank plus the top-5 leaderboard so
- * the game can show it immediately.
+ * Google Apps Script Web App that receives ?name=&score= GET requests from
+ * the Snake game, appends them as a row in the bound Google Spreadsheet,
+ * and replies with the submitted score's rank plus the top-5 leaderboard
+ * so the game can show it immediately.
+ *
+ * Uses GET (not POST) on purpose: Apps Script Web Apps serve their actual
+ * response via a 302 redirect, and per the fetch spec a POST is downgraded
+ * to GET when following a 301/302 redirect - which that redirect target
+ * then rejects. A GET request has no such downgrade, so the redirect (and
+ * therefore reading the JSON response back in the browser) works reliably.
  *
  * Setup: see README.md in the project root for full deployment steps.
  */
@@ -10,12 +16,12 @@
 const SHEET_NAME = 'Scores';
 const TOP_N = 5;
 
-function doPost(e) {
+function doGet(e) {
   const sheet = getOrCreateSheet_();
-  const data = JSON.parse(e.postData.contents);
+  const params = (e && e.parameter) || {};
 
-  const name = String(data.name || '匿名').slice(0, 50);
-  const score = Number(data.score) || 0;
+  const name = String(params.name || '匿名').slice(0, 50);
+  const score = Number(params.score) || 0;
   const timestamp = new Date();
 
   sheet.appendRow([timestamp, name, score]);
