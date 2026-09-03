@@ -1,11 +1,14 @@
 /**
  * Google Apps Script Web App that receives {name, score} POSTs from the
- * Snake game and appends them as a row in the bound Google Spreadsheet.
+ * Snake game, appends them as a row in the bound Google Spreadsheet, and
+ * replies with the submitted score's rank plus the top-5 leaderboard so
+ * the game can show it immediately.
  *
  * Setup: see README.md in the project root for full deployment steps.
  */
 
 const SHEET_NAME = 'Scores';
+const TOP_N = 5;
 
 function doPost(e) {
   const sheet = getOrCreateSheet_();
@@ -13,12 +16,45 @@ function doPost(e) {
 
   const name = String(data.name || '匿名').slice(0, 50);
   const score = Number(data.score) || 0;
+  const timestamp = new Date();
 
-  sheet.appendRow([new Date(), name, score]);
+  sheet.appendRow([timestamp, name, score]);
+
+  const leaderboard = getLeaderboard_(sheet);
+  const rank = leaderboard.findIndex(function (row) {
+    return row.score === score && row.timestamp.getTime() === timestamp.getTime();
+  }) + 1;
+
+  const top = leaderboard.slice(0, TOP_N).map(function (row) {
+    return { name: row.name, score: row.score };
+  });
 
   return ContentService
-    .createTextOutput(JSON.stringify({ status: 'ok' }))
+    .createTextOutput(JSON.stringify({
+      status: 'ok',
+      rank: rank || leaderboard.length,
+      total: leaderboard.length,
+      top: top
+    }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// returns all rows sorted best-first (higher score wins; earlier timestamp breaks ties)
+function getLeaderboard_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 3).getValues(); // Timestamp, Name, Score
+  const rows = values.map(function (r) {
+    return { timestamp: new Date(r[0]), name: r[1], score: Number(r[2]) || 0 };
+  });
+
+  rows.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.timestamp - b.timestamp;
+  });
+
+  return rows;
 }
 
 function getOrCreateSheet_() {

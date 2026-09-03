@@ -114,6 +114,46 @@
     color: var(--muted);
     font-size: 11px;
   }
+  .overlay {
+    overflow-y: auto;
+  }
+  .leaderboard {
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    max-width: 260px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .leaderboard .lb-title {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    text-align: center;
+  }
+  .lb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+  .lb-rank { width: 16px; color: var(--muted); font-weight: 700; }
+  .lb-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
+  .lb-score { color: var(--accent); font-weight: 700; }
+  .lb-row.lb-mine {
+    background: rgba(74, 222, 128, 0.15);
+    border-radius: 6px;
+  }
   button {
     cursor: pointer;
     border: none;
@@ -182,6 +222,7 @@
     <div class="overlay" id="overlay">
       <h2 id="overlayTitle">貪食蛇</h2>
       <p id="overlayText">按空白鍵或方向鍵開始遊戲</p>
+      <div class="leaderboard" id="leaderboard"></div>
       <div class="name-field" id="nameField">
         <input type="text" id="nameInput" maxlength="20" placeholder="輸入你的名字 Name" autocomplete="off" />
         <small>分數會記錄到排行榜</small>
@@ -213,6 +254,7 @@
   const dpad = document.getElementById('dpad');
   const nameField = document.getElementById('nameField');
   const nameInput = document.getElementById('nameInput');
+  const leaderboardEl = document.getElementById('leaderboard');
 
   // Paste your deployed Google Apps Script Web App URL here (see README).
   // Leave as-is to play without leaderboard recording.
@@ -241,16 +283,45 @@
     try { localStorage.setItem(NAME_KEY, v); } catch (e) {}
   }
 
-  function submitScore(name, finalScore) {
-    if (!SHEET_WEBAPP_URL || SHEET_WEBAPP_URL.indexOf('PASTE_YOUR') === 0) return;
-    fetch(SHEET_WEBAPP_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ name, score: finalScore })
-    }).catch(() => {
-      // best-effort only; a failed submit should never block the game
-    });
+  // posts the score and reads back { rank, total, top } from Apps Script;
+  // best-effort only, a failed/blocked request must never break the game
+  async function submitScore(name, finalScore) {
+    if (!SHEET_WEBAPP_URL || SHEET_WEBAPP_URL.indexOf('PASTE_YOUR') === 0) return null;
+    try {
+      const res = await fetch(SHEET_WEBAPP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ name, score: finalScore })
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+  }
+
+  // renders the top-N leaderboard rows; highlights the row matching myRank
+  function renderLeaderboard(top, myRank) {
+    if (!top || !top.length) {
+      leaderboardEl.innerHTML = '';
+      leaderboardEl.style.display = 'none';
+      return;
+    }
+    leaderboardEl.style.display = 'flex';
+    leaderboardEl.innerHTML = '<div class="lb-title">🏆 排行榜 Top 5</div>' +
+      top.map((row, i) => {
+        const rank = i + 1;
+        const mine = rank === myRank ? ' lb-mine' : '';
+        return `<div class="lb-row${mine}"><span class="lb-rank">${rank}</span>` +
+          `<span class="lb-name">${escapeHtml(row.name)}</span>` +
+          `<span class="lb-score">${row.score}</span></div>`;
+      }).join('');
   }
 
   function randCell() {
@@ -425,6 +496,7 @@
     overlayText.textContent = text;
     startBtn.textContent = btnLabel;
     nameField.style.display = showName ? 'flex' : 'none';
+    renderLeaderboard(null);
     overlay.classList.add('show');
     if (showName) {
       nameInput.focus();
@@ -463,11 +535,24 @@
     startGame();
   }
 
-  function gameOver() {
+  async function gameOver() {
     clearInterval(timer);
     running = false;
-    submitScore(playerName, score);
-    showOverlay('遊戲結束 Game Over', `${playerName}，分數：${score}　按開始重新挑戰`, '再玩一次 Restart', true);
+    const finalName = playerName;
+    const finalScore = score;
+
+    showOverlay('遊戲結束 Game Over', `${finalName}，分數：${finalScore}　正在查詢排名...`, '再玩一次 Restart', true);
+
+    const result = await submitScore(finalName, finalScore);
+    // the player may have already restarted while this was in flight
+    if (running) return;
+
+    if (result && result.status === 'ok') {
+      overlayText.textContent = `${finalName}，分數：${finalScore}　排名第 ${result.rank} 名（共 ${result.total} 人）`;
+      renderLeaderboard(result.top, result.rank);
+    } else {
+      overlayText.textContent = `${finalName}，分數：${finalScore}　按開始重新挑戰`;
+    }
   }
 
   function togglePause() {
